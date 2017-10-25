@@ -1,0 +1,8 @@
+[package]
+name = "futures-test"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+publish = false
+
+[dependencies]
+futures = "0.1"
