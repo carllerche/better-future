@@ -2,7 +2,7 @@ extern crate fnv;
 extern crate futures;
 
 use fnv::FnvHashMap;
-use futures::{Stream, Poll, Async};
+use futures::{Stream, Sink, Poll, Async, AsyncSink, StartSend};
 use futures::task::AtomicTask;
 
 use std::{mem, ops};
@@ -232,6 +232,20 @@ impl<T> Store<T> {
                 Ok(Async::Ready(()))
             }
         }
+    }
+}
+
+impl<T> Sink for Store<T> {
+    type SinkItem = T;
+    type SinkError = StoreError<T>;
+
+    fn start_send(&mut self, item: T) -> StartSend<T, StoreError<T>> {
+        let _ = self.store(item)?;
+        Ok(AsyncSink::Ready)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), StoreError<T>> {
+        Ok(().into())
     }
 }
 

@@ -8,6 +8,7 @@ easier.
 ## Contents
 
 * `futures-test`: Utilities for testing future based code.
+* `futures-watch`: A cell that notifies on update.
 
 ## License
 
