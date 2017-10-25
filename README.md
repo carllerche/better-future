@@ -5,6 +5,10 @@ This repository does not provide any of this. Instead, it has a collection of
 utilities that may make working with [futures-rs](http://github.com/alexcrichton/futures-rs)
 easier.
 
+## Contents
+
+* `futures-test`: Utilities for testing future based code.
+
 ## License
 
 The provided software is licensed under the terms of both the MIT license and
