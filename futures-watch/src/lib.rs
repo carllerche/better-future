@@ -1,0 +1,281 @@
+extern crate fnv;
+extern crate futures;
+
+use fnv::FnvHashMap;
+use futures::{Stream, Poll, Async};
+use futures::task::AtomicTask;
+
+use std::{mem, ops};
+use std::sync::{Arc, Weak, Mutex, RwLock, RwLockReadGuard};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
+
+/// Watch a value
+#[derive(Debug)]
+pub struct Watch<T> {
+    /// Pointer to the shared state
+    shared: Arc<Shared<T>>,
+
+    /// Pointer to the watcher's internal state
+    inner: Arc<WatchInner>,
+
+    /// Watcher ID.
+    id: u64,
+
+    /// Last observed version
+    ver: usize,
+}
+
+/// Store a new value in a `Watch`.
+#[derive(Debug)]
+pub struct Store<T> {
+    shared: Weak<Shared<T>>,
+}
+
+/// Borrowed reference
+#[derive(Debug)]
+pub struct Ref<'a, T: 'a> {
+    inner: RwLockReadGuard<'a, T>,
+}
+
+/// Errors produced by `Watch`.
+#[derive(Debug)]
+pub struct WatchError {
+    _p: (),
+}
+
+/// Errors produced by `Store`.
+#[derive(Debug)]
+pub struct StoreError<T> {
+    inner: T,
+}
+
+#[derive(Debug)]
+struct Shared<T> {
+    /// The most recent value
+    value: RwLock<T>,
+
+    /// The current version
+    ///
+    /// The lowest bit represents a "closed" state. The rest of the bits
+    /// represent the current version.
+    version: AtomicUsize,
+
+    /// All watchers
+    watchers: Mutex<Watchers>,
+
+    /// Task to notify when all watchers drop
+    cancel: AtomicTask,
+}
+
+#[derive(Debug)]
+struct Watchers {
+    next_id: u64,
+    watchers: FnvHashMap<u64, Arc<WatchInner>>,
+}
+
+#[derive(Debug)]
+struct WatchInner {
+    task: AtomicTask,
+}
+
+const CLOSED: usize = 1;
+
+// ===== impl Watch =====
+
+impl<T> Watch<T> {
+    /// Create a new watch
+    pub fn new(init: T) -> (Watch<T>, Store<T>) {
+        let inner = Arc::new(WatchInner::new());
+
+        // Insert the watcher
+        let mut watchers = FnvHashMap::with_capacity_and_hasher(0, Default::default());
+        watchers.insert(0, inner.clone());
+
+        let shared = Arc::new(Shared {
+            value: RwLock::new(init),
+            version: AtomicUsize::new(0),
+            watchers: Mutex::new(Watchers {
+                next_id: 1,
+                watchers,
+            }),
+            cancel: AtomicTask::new(),
+        });
+
+        let store = Store {
+            shared: Arc::downgrade(&shared),
+        };
+
+        let watch = Watch {
+            shared,
+            inner,
+            id: 0,
+            ver: 0,
+        };
+
+        (watch, store)
+    }
+
+    /// Returns true if the current value represents the final value
+    pub fn is_final(&self) -> bool {
+        CLOSED == self.shared.version.load(SeqCst) & CLOSED
+    }
+
+    /// Returns a reference to the inner value
+    pub fn borrow(&self) -> Ref<T> {
+        let inner = self.shared.value.read().unwrap();
+        Ref { inner }
+    }
+}
+
+impl<T> Stream for Watch<T> {
+    type Item = ();
+    type Error = WatchError;
+
+    fn poll(&mut self) -> Poll<Option<()>, Self::Error> {
+        // Make sure the task is up to date
+        self.inner.task.register();
+
+        let version = self.shared.version.load(SeqCst);
+
+        if CLOSED == version & CLOSED {
+            // The `Store` handle has been dropped.
+            return Ok(None.into());
+        }
+
+        if self.ver == version {
+            return Ok(Async::NotReady);
+        }
+
+        // Track the latest version
+        self.ver = version;
+
+        Ok(Some(()).into())
+    }
+}
+
+impl<T> Clone for Watch<T> {
+    fn clone(&self) -> Self {
+        let inner = Arc::new(WatchInner::new());
+        let shared = self.shared.clone();
+
+        let id = {
+            let mut watchers = shared.watchers.lock().unwrap();
+            let id = watchers.next_id;
+
+            watchers.next_id += 1;
+            watchers.watchers.insert(id, inner.clone());
+
+            id
+        };
+
+        let ver = self.ver;
+
+        Watch {
+            shared: shared,
+            inner,
+            id,
+            ver,
+        }
+    }
+}
+
+impl<T> Drop for Watch<T> {
+    fn drop(&mut self) {
+        let mut watchers = self.shared.watchers.lock().unwrap();
+        watchers.watchers.remove(&self.id);
+    }
+}
+
+impl WatchInner {
+    fn new() -> Self {
+        WatchInner { task: AtomicTask::new() }
+    }
+}
+
+// ===== impl Store =====
+
+impl<T> Store<T> {
+    /// Store a new value in the cell, notifying all watchers. The previous
+    /// value is returned.
+    pub fn store(&mut self, value: T) -> Result<T, StoreError<T>> {
+        let shared = match self.shared.upgrade() {
+            Some(shared) => shared,
+            // All `Watch` handles have been canceled
+            None => return Err(StoreError::new(value)),
+        };
+
+        // Replace the value
+        let value = {
+            let mut lock = shared.value.write().unwrap();
+            mem::replace(&mut *lock, value)
+        };
+
+        // Update the version. 2 is used so that the CLOSED bit is not set.
+        shared.version.fetch_add(2, SeqCst);
+
+        // Notify all watchers
+        notify_all(&*shared);
+
+        // Return the old value
+        Ok(value)
+    }
+
+    /// Returns `Ready` when all watchers have dropped.
+    pub fn poll_cancel(&mut self) -> Poll<(), ()> {
+        match self.shared.upgrade() {
+            Some(shared) => {
+                shared.cancel.register();
+                Ok(Async::NotReady)
+            }
+            None => {
+                Ok(Async::Ready(()))
+            }
+        }
+    }
+}
+
+/// Notify all watchers of a change
+fn notify_all<T>(shared: &Shared<T>) {
+    let watchers = shared.watchers.lock().unwrap();
+
+    for watcher in watchers.watchers.values() {
+        // Notify the task
+        watcher.task.notify();
+    }
+}
+
+impl<T> Drop for Store<T> {
+    fn drop(&mut self) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.version.fetch_or(CLOSED, SeqCst);
+            notify_all(&*shared);
+        }
+    }
+}
+
+// ===== impl Ref =====
+
+impl<'a, T: 'a> ops::Deref for Ref<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.inner.deref()
+    }
+}
+
+// ===== impl Shared =====
+
+impl<T> Drop for Shared<T> {
+    fn drop(&mut self) {
+        self.cancel.notify();
+    }
+}
+
+// ===== impl StoreError =====
+
+impl<T> StoreError<T> {
+    fn new(inner: T) -> Self {
+        StoreError { inner }
+    }
+}

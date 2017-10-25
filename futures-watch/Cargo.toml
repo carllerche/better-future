@@ -1,0 +1,12 @@
+[package]
+name = "futures-watch"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+publish = false
+
+[dependencies]
+futures = "0.1"
+fnv = "1.0.5"
+
+[dev-dependencies]
+futures-test = { path = "../futures-test" }
