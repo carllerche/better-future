@@ -3,7 +3,6 @@ extern crate futures_test;
 extern crate futures_watch;
 
 use futures::{Stream};
-use futures::future::poll_fn;
 use futures_test::Harness;
 use futures_watch::*;
 
@@ -15,8 +14,7 @@ fn smoke() {
     assert_eq!(*watch.borrow(), "one");
     assert!(!watch.is_final());
 
-    {
-        let mut harness = Harness::new(poll_fn(|| watch.poll()));
+    Harness::poll_fn(|| watch.poll()).with(|harness| {
         assert!(!harness.poll().unwrap().is_ready());
 
         // Change the value.
@@ -24,13 +22,12 @@ fn smoke() {
 
         // The watch was notified
         assert!(harness.poll().unwrap().is_ready());
-    }
+    });
 
     assert!(!watch.is_final());
     assert_eq!(*watch.borrow(), "two");
 
-    {
-        let mut harness = Harness::new(poll_fn(|| watch.poll()));
+    Harness::poll_fn(|| watch.poll()).with(|harness| {
         assert!(!harness.poll().unwrap().is_ready());
 
         // Dropping `store` notifies watches
@@ -38,7 +35,7 @@ fn smoke() {
 
         // The watch was notified
         assert!(harness.poll().unwrap().is_ready());
-    }
+    });
 
     assert!(watch.is_final());
     assert_eq!(*watch.borrow(), "two");
@@ -50,8 +47,8 @@ fn multiple_watches() {
     let mut watch2 = watch1.clone();
 
     {
-        let mut h1 = Harness::new(poll_fn(|| watch1.poll()));
-        let mut h2 = Harness::new(poll_fn(|| watch2.poll()));
+        let mut h1 = Harness::poll_fn(|| watch1.poll());
+        let mut h2 = Harness::poll_fn(|| watch2.poll());
 
         assert!(!h1.poll().unwrap().is_ready());
 

@@ -45,6 +45,12 @@ impl<T> Harness<T> {
         }
     }
 
+    pub fn with<F, R>(&mut self, f: F) -> R
+    where F: FnOnce(&mut Self) -> R,
+    {
+        f(self)
+    }
+
     /// Returns `true` if the inner future has received a readiness notification
     /// since the last action has been performed.
     pub fn is_notified(&self) -> bool {
@@ -64,6 +70,15 @@ impl<T> Harness<T> {
     /// Consumes `self`, returning the inner future.
     pub fn into_inner(self) -> T {
         self.spawn.into_inner()
+    }
+}
+
+impl<F, T, E> Harness<::futures::future::PollFn<F>>
+where F: FnMut() -> Poll<T, E>,
+{
+    /// Wraps the `poll_fn` in a harness.
+    pub fn poll_fn(f: F) -> Self {
+        Harness::new(::futures::future::poll_fn(f))
     }
 }
 
