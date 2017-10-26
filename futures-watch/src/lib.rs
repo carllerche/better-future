@@ -1,3 +1,90 @@
+//! A multi-consumer, single producer cell that receives notifications when the inner value is
+//! changed.
+//!
+//! # Usage
+//!
+//! [`Watch::new`] returns a [`Watch`] / [`Store`] pair. These are the consumer and
+//! producer halves of the cell. The watch cell is created with an initial
+//! value. Calls to [`Watch::borrow`] will always yield the latest value.
+//!
+//! ```
+//! # use futures_watch::*;
+//! let (watch, store) = Watch::new("hello");
+//! assert_eq!(*watch.borrow(), "hello");
+//! # drop(store);
+//! ```
+//!
+//! Using the [`Store`] handle, the cell value can be updated.
+//!
+//! ```
+//! # use futures_watch::*;
+//! let (watch, mut store) = Watch::new("hello");
+//! store.store("goodbye");
+//! assert_eq!(*watch.borrow(), "goodbye");
+//! ```
+//!
+//! [`Watch`] handles are future-aware and will receive notifications whenever
+//! the inner value is changed.
+//!
+//! ```
+//! # extern crate futures;
+//! # extern crate futures_watch;
+//! # pub fn main() {
+//! # use futures::*;
+//! # use futures_watch::*;
+//! # use std::thread;
+//! # use std::time::Duration;
+//! let (watch, mut store) = Watch::new("hello");
+//!
+//! thread::spawn(move || {
+//!     thread::sleep(Duration::from_millis(100));
+//!     store.store("goodbye");
+//! });
+//!
+//! watch.into_future()
+//!     .and_then(|(_, watch)| {
+//!         assert_eq!(*watch.borrow(), "goodbye");
+//!         Ok(())
+//!     })
+//!     .wait().unwrap();
+//! # }
+//! ```
+//!
+//! [`Watch::borrow`] will yield the most recently stored value. All
+//! intermediate values are dropped.
+//!
+//! ```
+//! # use futures_watch::*;
+//! let (watch, mut store) = Watch::new("hello");
+//!
+//! store.store("two");
+//! store.store("three");
+//!
+//! assert_eq!(*watch.borrow(), "three");
+//! ```
+//!
+//! # Cancellation
+//!
+//! [`Store::poll_cancel`] allows the producer to detect when all [`Watch`]
+//! handles have been dropped. This indicates that there is no further interest
+//! in the values being produced and work can be stopped.
+//!
+//! When the [`Store`] is dropped, the watch handles will be notified and
+//! [`Watch::is_final`] will return true.
+//!
+//! # Thread safety
+//!
+//! Both [`Watch`] and [`Store`] are thread safe. They can be moved to other
+//! threads and can be used in a concurrent environment. Clones of [`Watch`]
+//! handles may be moved to separate threads and also used concurrently.
+//!
+//! [`Watch`]: struct.Watch.html
+//! [`Store`]: struct.Store.html
+//! [`Watch::new`]: struct.Watch.html#method.new
+//! [`Watch::borrow`]: struct.Watch.html#method.borrow
+//! [`Watch::is_final`]: struct.Watch.html#method.is_final
+//! [`Store::poll_cancel`]: struct.Store.html#method.poll_cancel
+
 extern crate fnv;
 extern crate futures;
 
@@ -10,7 +97,18 @@ use std::sync::{Arc, Weak, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-/// Watch a value
+/// A future-aware cell that receives notifications when the inner value is
+/// changed.
+///
+/// `Watch` implements `Stream`, yielding `()` whenever the inner value is
+/// changed. This allows a user to monitor this stream to get notified of change
+/// events.
+///
+/// `Watch` handles may be cloned in order to create additional watchers. Each
+/// watcher operates independently and can be used to notify separate tasks.
+/// Each watcher handle must be used from only a single task.
+///
+/// See crate level documentation for more details.
 #[derive(Debug)]
 pub struct Watch<T> {
     /// Pointer to the shared state
@@ -26,13 +124,23 @@ pub struct Watch<T> {
     ver: usize,
 }
 
-/// Store a new value in a `Watch`.
+/// Update the inner value of a `Watch` cell.
+///
+/// The [`store`] function sets the inner value of the cell, returning the
+/// previous value. Alternatively, `Store` implements `Sink` such that values
+/// pushed into the `Sink` are stored in the cell.
+///
+/// See crate level documentation for more details.
 #[derive(Debug)]
 pub struct Store<T> {
     shared: Weak<Shared<T>>,
 }
 
 /// Borrowed reference
+///
+/// See [`Watch::borrow`] for more details.
+///
+/// [`Watch::borrow`]: struct.Watch.html#method.borrow
 #[derive(Debug)]
 pub struct Ref<'a, T: 'a> {
     inner: RwLockReadGuard<'a, T>,
@@ -84,7 +192,20 @@ const CLOSED: usize = 1;
 // ===== impl Watch =====
 
 impl<T> Watch<T> {
-    /// Create a new watch
+    /// Create a new watch cell, returning the consumer / producer halves.
+    ///
+    /// All values stored by the `Store` will become visible to the `Watch`
+    /// handles. Only the last value stored is made available to the `Watch`
+    /// half. All intermediate values are dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use futures_watch::*;
+    /// let (watch, mut store) = Watch::new("hello");
+    /// store.store("goodbye");
+    /// assert_eq!(*watch.borrow(), "goodbye");
+    /// ```
     pub fn new(init: T) -> (Watch<T>, Store<T>) {
         let inner = Arc::new(WatchInner::new());
 
@@ -117,17 +238,47 @@ impl<T> Watch<T> {
     }
 
     /// Returns true if the current value represents the final value
+    ///
+    /// A value becomes final once the `Store` handle is dropped. This indicates
+    /// that there can no longer me any values stored in the cell.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use futures_watch::*;
+    /// let (watch, store) = Watch::new("hello");
+    ///
+    /// assert!(!watch.is_final());
+    /// drop(store);
+    /// assert!(watch.is_final());
+    /// ```
     pub fn is_final(&self) -> bool {
         CLOSED == self.shared.version.load(SeqCst) & CLOSED
     }
 
     /// Returns a reference to the inner value
+    ///
+    /// Outstanding borrows hold a read lock on the inner value. This means that
+    /// long lived borrows could cause the produce half to block. It is
+    /// recommended to keep the borrow as short lived as possible.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use futures_watch::*;
+    /// let (watch, _) = Watch::new("hello");
+    /// assert_eq!(*watch.borrow(), "hello");
+    /// ```
     pub fn borrow(&self) -> Ref<T> {
         let inner = self.shared.value.read().unwrap();
         Ref { inner }
     }
 }
 
+/// A stream of inner value change events.
+///
+/// Whenever the inner value of the cell is updated by the `Store` handle, `()`
+/// is yielded by this stream.
 impl<T> Stream for Watch<T> {
     type Item = ();
     type Error = WatchError;
@@ -198,6 +349,15 @@ impl WatchInner {
 impl<T> Store<T> {
     /// Store a new value in the cell, notifying all watchers. The previous
     /// value is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use futures_watch::*;
+    /// let (watch, mut borrow) = Watch::new("hello");
+    /// assert_eq!(borrow.store("goodbye").unwrap(), "hello");
+    /// assert_eq!(*watch.borrow(), "goodbye");
+    /// ```
     pub fn store(&mut self, value: T) -> Result<T, StoreError<T>> {
         let shared = match self.shared.upgrade() {
             Some(shared) => shared,
@@ -222,6 +382,9 @@ impl<T> Store<T> {
     }
 
     /// Returns `Ready` when all watchers have dropped.
+    ///
+    /// This allows the producer to get notified when interest in the produced
+    /// values is canceled and immediately stop doing work.
     pub fn poll_cancel(&mut self) -> Poll<(), ()> {
         match self.shared.upgrade() {
             Some(shared) => {
