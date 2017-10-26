@@ -4,16 +4,40 @@ sudo: false
 
 matrix:
   include:
-    # Minimum rustc version
+    # Minimum rustc version. This should not be changed without a github issue
+    # to discuss
     - rust: 1.21.0
     - rust: nightly
 
 script:
+  # Run tests for all crates in the workspace.
   - cargo test --all
-  - 'if [ "$TRAVIS_RUST_VERSION" == "nightly" ]; then cargo bench --all; fi'
+
+  # Run benchmarks on nightly
+  - if [ "$TRAVIS_RUST_VERSION" == "nightly" ]; then cargo bench --all; fi
+
+  # Run any code samples in the readme
   - rustdoc --test README.md -L target/debug/deps
+
+  # Build docs
   - cargo doc --no-deps
+
+# Deploy docs
+deploy:
+  provider: pages
+  skip_cleanup: true
+  github_token: $GH_TOKEN
+  target_branch: gh-pages
+  local_dir: target/doc
+  on:
+    branch: master
+    repo: carllerche/better-future
+    rust: stable
+
+env:
+  global:
+    secure: ri4trDseNsS8ruEHGvTcp6AeOitp/on7r1vuLFhmnpXjqbkvKLaY2z6LpTKsQhTDEygs2NN8t3Lzn33jxCYCBsEmWum9ssHlHOY0UwxvENfvUX2T4+u49L5yztuk2cwZHNuSZqAm2d8RR1TqtRR/WtoVr7nOe/Yeftim49oVTY5TuTIQiwFIpBXcMWleqf5jKz37gY00p3MULOVdoxqlMiLH8SZvLv/CcBuMHFuPsqnv6cEzIa7Yc752bPUduCWdLrRe3+bQyTylK+DLeb/3H2pA7T6Tg9y3BOuCg0HX6nK1bbXKuwd9ovhs/gPvplsMpzI2+ybXQS/UK5SQQrWJ49Gm+RMlOPtBUeDjrAF7d0qoPr+neGy/ncQQnwLeuSCpCWZl9icCNFh4iY2Z6MHubQoOQ5YNTlWsuG4bRTND+TuaVhJ18mrupblJUvSlg02rPul/luamwBFXoQ9DHEepKi163P6tZVHiGLmXCL258CwSZNMjoEdgkV+gQgc5WQVRhq0dP+BvVA/93VimmLc/ln/Z/z+Cv3ghBsdz8Le+1iPsFnSRMcjzkH1HfRNDmrhl3yqd4AzcRU76e9/fR6CGfrbuxEcAW6892yiNPkWyNl6pJ+Oz+Bp4QMfU8HFNrS00UYJ0moL6KcgDuj/Y1UvjrN7OE3/b+zy56VHjsdJ/W0I=
 
 notifications:
   email:
-on_success: never
+    on_success: never
