@@ -9,7 +9,7 @@ easier.
 
 ### `futures-test`
 
-Utilities for teting futures based code.
+Utilities for testing futures based code.
 
 [Documentation](https://carllerche.github.io/better-future/futures_test/)
 
