@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "futures-borrow",
   "futures-test",
   "futures-watch",
 ]

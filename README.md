@@ -7,6 +7,39 @@ easier.
 
 [![Travis Build Status](https://travis-ci.org/carllerche/better-future.svg?branch=master)](https://travis-ci.org/carllerche/better-future)
 
+### `futures-borrow`
+
+Future-aware cell that can move borrows into futures and closures.
+
+[Documentation](https://carllerche.github.io/better-future/futures_borrow/)
+
+```rust
+extern crate futures;
+extern crate futures_borrow;
+
+use futures::*;
+use futures_borrow::Borrow;
+
+fn main() {
+    let borrow = Borrow::new("hello".to_string());
+
+    // Acquire a borrow
+    let b = borrow.try_borrow().unwrap();
+
+    // The borrow is in use
+    assert!(!borrow.is_ready());
+
+    // Use the borrow in a closure
+    future::ok::<_, ()>(()).and_then(move |_| {
+        println!("value={}", &*b);
+        Ok(())
+    }).wait().unwrap();
+
+    // A new borrow can be made
+    assert!(borrow.is_ready());
+}
+```
+
 ### `futures-test`
 
 Utilities for testing futures based code.
