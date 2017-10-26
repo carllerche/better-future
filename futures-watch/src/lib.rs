@@ -85,6 +85,8 @@
 //! [`Watch::is_final`]: struct.Watch.html#method.is_final
 //! [`Store::poll_cancel`]: struct.Store.html#method.poll_cancel
 
+#![deny(warnings, missing_docs, missing_debug_implementations)]
+
 extern crate fnv;
 extern crate futures;
 
