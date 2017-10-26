@@ -5,6 +5,8 @@ This repository does not provide any of this. Instead, it has a collection of
 utilities that may make working with [futures-rs](http://github.com/alexcrichton/futures-rs)
 easier.
 
+[![Travis Build Status](https://travis-ci.org/carllerche/better-future.svg?branch=master)](https://travis-ci.org/carllerche/better-future)
+
 ## Contents
 
 * `futures-test`: Utilities for testing future based code.
