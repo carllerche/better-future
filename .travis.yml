@@ -5,7 +5,7 @@ sudo: false
 matrix:
   include:
     # Minimum rustc version
-    - rust: 1.20.0
+    - rust: 1.21.0
     - rust: nightly
 
 script:
