@@ -1,4 +1,4 @@
-use futures::{Future, Poll, Async};
+use futures::{Future, Stream, Poll, Async};
 use futures::executor::{spawn, Spawn, Notify};
 
 use std::time::{Duration, Instant};
@@ -131,6 +131,17 @@ impl<T: Future> Harness<T> {
                 Async::Ready(e) => return Ok(e),
             }
         }
+    }
+}
+
+impl<T: Stream> Harness<T> {
+    /// Polls the inner future.
+    ///
+    /// This function returns immediately. If the inner future is not currently
+    /// ready, `NotReady` is returned. Readiness notifications are tracked and
+    /// can be queried using `is_notified`.
+    pub fn poll_next(&mut self) -> Poll<Option<T::Item>, T::Error> {
+        self.spawn.poll_stream_notify(&self.notify, 0)
     }
 }
 

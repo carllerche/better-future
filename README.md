@@ -7,10 +7,66 @@ easier.
 
 [![Travis Build Status](https://travis-ci.org/carllerche/better-future.svg?branch=master)](https://travis-ci.org/carllerche/better-future)
 
-## Contents
+### `futures-test`
 
-* `futures-test`: Utilities for testing future based code.
-* `futures-watch`: A cell that notifies on update.
+Utilities for teting futures based code.
+
+[Documentation](https://carllerche.github.io/better-future/futures_test/)
+
+```rust
+extern crate futures;
+extern crate futures_test;
+
+use futures::*;
+use futures::sync::mpsc;
+use futures_test::Harness;
+
+fn main() {
+    let (tx, rx) = mpsc::channel(10);
+    let mut rx = Harness::new(rx);
+
+    assert!(!rx.is_notified());
+    // The future is polled out of a task context.
+    assert!(!rx.poll_next().unwrap().is_ready());
+
+    tx.send("hello").wait().unwrap();
+
+    assert!(rx.is_notified());
+}
+```
+
+### `futures-watch`
+
+A multi-consumer, single producer cell that receives notifications when the
+inner value is changed. This allows for efficiently broadcasting values to
+multiple watchers. This can be useful for situations like updating configuration
+values throughout a system.
+
+[Documentation](https://carllerche.github.io/better-future/futures_watch/)
+
+```rust
+extern crate futures;
+extern crate futures_watch;
+
+use futures::{Future, Stream};
+use futures_watch::Watch;
+use std::thread;
+
+fn main() {
+    let (watch, mut store) = Watch::new("hello");
+
+    thread::spawn(move || {
+        store.store("goodbye");
+    });
+
+    watch.into_future()
+        .and_then(|(_, watch)| {
+            assert_eq!(*watch.borrow(), "goodbye");
+            Ok(())
+        })
+        .wait().unwrap();
+}
+```
 
 ## License
 
