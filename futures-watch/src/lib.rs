@@ -133,6 +133,8 @@ pub struct Watch<T> {
 /// pushed into the `Sink` are stored in the cell.
 ///
 /// See crate level documentation for more details.
+///
+/// [`store`]: #method.store
 #[derive(Debug)]
 pub struct Store<T> {
     shared: Weak<Shared<T>>,
