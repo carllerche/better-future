@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["ThenStream","Each time the underlying `Watch<T>` is updated, the stream maps over the most-recent value."]],"trait":[["Then","Maps borrowed references to `T` into an `Item`."]]});
