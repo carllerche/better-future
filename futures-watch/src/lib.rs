@@ -99,6 +99,11 @@ use std::sync::{Arc, Weak, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
+/// Uses a `Watch` to produce a `Stream` of mapped values.
+pub mod then_stream;
+
+pub use then_stream::Then;
+
 /// A future-aware cell that receives notifications when the inner value is
 /// changed.
 ///
@@ -276,6 +281,11 @@ impl<T> Watch<T> {
     pub fn borrow(&self) -> Ref<T> {
         let inner = self.shared.value.read().unwrap();
         Ref { inner }
+    }
+
+    /// Convert this watch into a stream of values produced by an `M`-typed map function.
+    pub fn then_stream<M: Then<T>>(self, then: M) -> then_stream::ThenStream<T, M> {
+        then_stream::ThenStream::new(self, then)
     }
 }
 
